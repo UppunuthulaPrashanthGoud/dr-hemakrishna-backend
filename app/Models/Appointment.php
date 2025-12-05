@@ -30,6 +30,13 @@ class Appointment extends Model
         'selected_time' => 'string'
     ];
 
+    // Default values for attributes
+    protected $attributes = [
+        'status' => 'pending',
+        'payment_status' => 'pending',
+        'amount' => 0.00
+    ];
+
     // Accessor to format the appointment date and time
     public function getAppointmentDateTimeAttribute()
     {

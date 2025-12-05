@@ -160,7 +160,7 @@ class AppointmentController extends Controller
                     Log::error('Failed to create Razorpay order');
                     return response()->json([
                         'status' => 500,
-                        'message' => 'Failed to create payment order'
+                        'message' => 'Failed to create payment order. Please try again.'
                     ], 500);
                 }
                 
@@ -221,7 +221,7 @@ class AppointmentController extends Controller
             ]);
             return response()->json([
                 'status' => 500,
-                'message' => 'Something went wrong!'
+                'message' => 'Something went wrong! Please try again later.'
             ], 500);
         }
     }
@@ -305,12 +305,20 @@ class AppointmentController extends Controller
             }
 
             // Update payment status
+            $oldPaymentStatus = $appointment->payment_status;
             $appointment->payment_status = $request->payment_status;
             
             // If payment is completed, confirm the appointment
             if ($request->payment_status === 'completed') {
                 $appointment->status = 'confirmed';
                 Log::info('Appointment confirmed due to successful payment', [
+                    'appointment_id' => $appointment->id
+                ]);
+            }
+            // If payment failed, keep appointment as pending
+            else if ($request->payment_status === 'failed') {
+                $appointment->status = 'pending';
+                Log::info('Appointment kept as pending due to failed payment', [
                     'appointment_id' => $appointment->id
                 ]);
             }
@@ -323,7 +331,8 @@ class AppointmentController extends Controller
             
             Log::info('Payment status updated successfully', [
                 'appointment_id' => $appointment->id,
-                'payment_status' => $request->payment_status,
+                'old_payment_status' => $oldPaymentStatus,
+                'new_payment_status' => $request->payment_status,
                 'appointment_status' => $appointment->status,
                 'transaction_id' => $appointment->transaction_id
             ]);

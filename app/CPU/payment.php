@@ -23,7 +23,7 @@ class Payment
 
             Log::info('Razorpay credentials', [
                 'key_id' => $razorpay_key_id,
-                'key_secret_length' => strlen($razorpay_key_secret)
+                'key_secret_configured' => !empty($razorpay_key_secret)
             ]);
 
             $api = new Api($razorpay_key_id, $razorpay_key_secret);
