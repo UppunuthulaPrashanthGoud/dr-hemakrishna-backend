@@ -1,8 +1,11 @@
 <?php
-namespace App\Http\Controllers\Api;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\HomepageController;
+use App\Http\Controllers\Api\ContactController;
+use App\Http\Controllers\Api\AppointmentController;
 
 /*
 |--------------------------------------------------------------------------
@@ -35,8 +38,16 @@ Route::group(['prefix' => 'client'], function () {
 	Route::get('get-reviews-list', [HomepageController::class, 'getReviews']);
 
 	
-Route::post('appointment', [AppointmentController::class, 'storeAppointment']);
-Route::post('contact', [AppointmentController::class, 'storeContact']);
+    Route::post('appointment', [AppointmentController::class, 'storeAppointment']);
+    Route::post('contact', [AppointmentController::class, 'storeContact']);
+    // Add the missing update-payment-status route
+    Route::post('update-payment-status', [AppointmentController::class, 'updatePaymentStatus']);
+    
+    // Add other missing routes
+    Route::get('/dashboard-stats', [AppointmentController::class, 'getDashboardStats']);
+    Route::get('/appointments', [AppointmentController::class, 'getAppointments']);
+    Route::post('/appointments/{id}/update-status', [AppointmentController::class, 'updateAppointmentStatus']);
+    Route::post('/appointments/{id}/update-payment-status', [AppointmentController::class, 'updatePaymentStatusById']);
 
 	// general settings
 	Route::get('general-settings', [HomepageController::class, 'getGeneralSettings']);
@@ -45,8 +56,6 @@ Route::post('contact', [AppointmentController::class, 'storeContact']);
 	// get dynamic page
 	Route::get('get-dynamic-page/{slug}', [HomepageController::class, 'getDynamicPage']);
 });
-
-
 
 
 
@@ -82,4 +91,3 @@ Route::group(['middleware' => 'auth:api'], function(){
 
 	
 });
-
