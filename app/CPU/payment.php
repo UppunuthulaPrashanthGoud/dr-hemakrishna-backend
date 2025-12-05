@@ -3,6 +3,7 @@
 namespace App\CPU;
 
 use Razorpay\Api\Api;
+use Log;
 
 class Payment
 {
@@ -11,8 +12,19 @@ class Payment
     public static function razorpay_order($amount)
     {
         try {
+            Log::info('Creating Razorpay order', [
+                'amount' => $amount,
+                'razorpay_key_id_configured' => !empty(env('RAZORPAY_KEY_ID')),
+                'razorpay_key_secret_configured' => !empty(env('RAZORPAY_KEY_SECRET'))
+            ]);
+            
             $razorpay_key_id = env('RAZORPAY_KEY_ID', 'rzp_test_T4AraVExlu3Idf');
             $razorpay_key_secret = env('RAZORPAY_KEY_SECRET', 'IbL6yVAfWAx4F1l7S1gZCVuT');
+
+            Log::info('Razorpay credentials', [
+                'key_id' => $razorpay_key_id,
+                'key_secret_length' => strlen($razorpay_key_secret)
+            ]);
 
             $api = new Api($razorpay_key_id, $razorpay_key_secret);
             
@@ -23,11 +35,24 @@ class Payment
                 'payment_capture' => 1 // Auto capture
             ];
 
+            Log::info('Sending order creation request to Razorpay', [
+                'order_data' => $orderData
+            ]);
+            
             $razorpayOrder = $api->order->create($orderData);
+            
+            Log::info('Razorpay order created successfully', [
+                'order_response' => $razorpayOrder->toArray()
+            ]);
 
             return $razorpayOrder;
         } catch (\Exception $e) {
-            \Log::error('Razorpay Order Creation Error: ' . $e->getMessage());
+            Log::error('Razorpay Order Creation Error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'amount' => $amount,
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
             return false;
         }
     }
@@ -36,6 +61,10 @@ class Payment
     public static function verify_signature($attributes)
     {
         try {
+            Log::info('Verifying Razorpay signature', [
+                'attributes' => $attributes
+            ]);
+            
             $razorpay_key_id = env('RAZORPAY_KEY_ID', 'rzp_test_T4AraVExlu3Idf');
             $razorpay_key_secret = env('RAZORPAY_KEY_SECRET', 'IbL6yVAfWAx4F1l7S1gZCVuT');
             
@@ -47,13 +76,32 @@ class Payment
                 $razorpay_key_secret
             );
             
-            if (hash_equals($generated_signature, $attributes['razorpay_signature'])) {
+            $is_valid = hash_equals($generated_signature, $attributes['razorpay_signature']);
+            
+            Log::info('Razorpay signature verification result', [
+                'is_valid' => $is_valid,
+                'generated_signature' => $generated_signature,
+                'received_signature' => $attributes['razorpay_signature']
+            ]);
+            
+            if ($is_valid) {
                 return true;
             } else {
+                Log::warning('Razorpay signature verification failed', [
+                    'expected_signature' => $generated_signature,
+                    'received_signature' => $attributes['razorpay_signature'],
+                    'order_id' => $attributes['razorpay_order_id'],
+                    'payment_id' => $attributes['razorpay_payment_id']
+                ]);
                 return false;
             }
         } catch (\Exception $e) {
-            \Log::error('Razorpay Signature Verification Error: ' . $e->getMessage());
+            Log::error('Razorpay Signature Verification Error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'attributes' => $attributes,
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
             return false;
         }
     }

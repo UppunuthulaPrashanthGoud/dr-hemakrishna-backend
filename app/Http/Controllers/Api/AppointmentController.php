@@ -8,12 +8,15 @@ use App\Models\Appointment;
 use App\Models\Contact;
 use App\CPU\Payment;
 use Validator;
+use Log;
 
 class AppointmentController extends Controller
 {
     public function getDashboardStats()
     {
         try {
+            Log::info('Fetching dashboard statistics');
+            
             // Get payment statistics
             $onlinePayments = Appointment::where('payment_method', 'online')
                                         ->where('payment_status', 'completed')
@@ -26,6 +29,13 @@ class AppointmentController extends Controller
             $totalAppointments = Appointment::count();
             $pendingAppointments = Appointment::where('status', 'pending')->count();
 
+            Log::info('Dashboard statistics fetched successfully', [
+                'online_payments' => $onlinePayments,
+                'offline_payments' => $offlinePayments,
+                'total_appointments' => $totalAppointments,
+                'pending_appointments' => $pendingAppointments
+            ]);
+
             return response()->json([
                 'totalAppointments' => $totalAppointments,
                 'pendingAppointments' => $pendingAppointments,
@@ -33,6 +43,9 @@ class AppointmentController extends Controller
                 'offlinePayments' => (float)$offlinePayments
             ], 200);
         } catch (\Exception $e) {
+            Log::error('Dashboard Stats Error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
             return response()->json([
                 'status' => 500,
                 'message' => 'Something went wrong!'
@@ -43,10 +56,18 @@ class AppointmentController extends Controller
     public function getAppointments()
     {
         try {
+            Log::info('Fetching all appointments');
             $appointments = Appointment::orderBy('created_at', 'desc')->get();
+            
+            Log::info('Appointments fetched successfully', [
+                'count' => $appointments->count()
+            ]);
             
             return response()->json($appointments, 200);
         } catch (\Exception $e) {
+            Log::error('Get Appointments Error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
             return response()->json([
                 'status' => 500,
                 'message' => 'Something went wrong!'
@@ -57,6 +78,12 @@ class AppointmentController extends Controller
     public function storeAppointment(Request $request)
     {
         try {
+            Log::info('Appointment booking request received', [
+                'request_data' => $request->all(),
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent()
+            ]);
+            
             $validator = Validator::make($request->all(), [
                 'fullname' => 'required|string|max:255',
                 'mobile' => 'required|string|max:15',
@@ -70,6 +97,10 @@ class AppointmentController extends Controller
             ]);
 
             if ($validator->fails()) {
+                Log::warning('Appointment validation failed', [
+                    'errors' => $validator->errors(),
+                    'request_data' => $request->all()
+                ]);
                 return response()->json([
                     'status' => 400,
                     'message' => $validator->errors()
@@ -90,24 +121,43 @@ class AppointmentController extends Controller
                 'payment_status' => $request->payment_method === 'offline' ? 'pending' : 'unpaid'
             ];
 
+            Log::info('Processing appointment with payment method: ' . $request->payment_method);
+            
             // If online payment, we'll create a transaction ID
             if ($request->payment_method === 'online') {
                 $appointmentData['transaction_id'] = uniqid('txn_');
+                
+                Log::info('Creating Razorpay order', [
+                    'amount' => $request->amount
+                ]);
                 
                 // Create Razorpay order
                 $razorpayOrder = Payment::razorpay_order($request->amount);
                 
                 if (!$razorpayOrder) {
+                    Log::error('Failed to create Razorpay order');
                     return response()->json([
                         'status' => 500,
                         'message' => 'Failed to create payment order'
                     ], 500);
                 }
                 
+                Log::info('Razorpay order created successfully', [
+                    'order_id' => $razorpayOrder['id']
+                ]);
+                
                 $appointmentData['transaction_id'] = $razorpayOrder['id'];
             }
 
+            Log::info('Creating appointment record', [
+                'appointment_data' => $appointmentData
+            ]);
+            
             $appointment = Appointment::create($appointmentData);
+            
+            Log::info('Appointment created successfully', [
+                'appointment_id' => $appointment->id
+            ]);
 
             $responseData = [
                 'status' => 200,
@@ -124,9 +174,19 @@ class AppointmentController extends Controller
                 $responseData['amount'] = $razorpayOrder['amount'];
             }
 
+            Log::info('Appointment booking completed successfully', [
+                'response_data' => $responseData
+            ]);
+
             return response()->json($responseData, 200);
 
         } catch (\Exception $e) {
+            Log::error('Appointment Booking Error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
             return response()->json([
                 'status' => 500,
                 'message' => 'Something went wrong!'
@@ -137,6 +197,12 @@ class AppointmentController extends Controller
     public function updatePaymentStatus(Request $request)
     {
         try {
+            Log::info('Update payment status request received', [
+                'request_data' => $request->all(),
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent()
+            ]);
+            
             $validator = Validator::make($request->all(), [
                 'appointment_id' => 'required|exists:appointments,id',
                 'payment_status' => 'required|in:completed,failed,pending,unpaid',
@@ -146,6 +212,10 @@ class AppointmentController extends Controller
             ]);
 
             if ($validator->fails()) {
+                Log::warning('Payment status validation failed', [
+                    'errors' => $validator->errors(),
+                    'request_data' => $request->all()
+                ]);
                 return response()->json([
                     'status' => 400,
                     'message' => $validator->errors()
@@ -155,14 +225,30 @@ class AppointmentController extends Controller
             $appointment = Appointment::find($request->appointment_id);
             
             if (!$appointment) {
+                Log::warning('Appointment not found', [
+                    'appointment_id' => $request->appointment_id
+                ]);
                 return response()->json([
                     'status' => 404,
                     'message' => 'Appointment not found'
                 ], 404);
             }
 
+            Log::info('Processing payment for appointment', [
+                'appointment_id' => $appointment->id,
+                'current_payment_status' => $appointment->payment_status,
+                'new_payment_status' => $request->payment_status,
+                'has_razorpay_payment_id' => !empty($request->razorpay_payment_id),
+                'has_razorpay_signature' => !empty($request->razorpay_signature)
+            ]);
+
             // Verify Razorpay payment if it's an online payment
             if ($request->razorpay_payment_id && $request->razorpay_signature) {
+                Log::info('Verifying Razorpay payment', [
+                    'order_id' => $appointment->transaction_id,
+                    'payment_id' => $request->razorpay_payment_id
+                ]);
+                
                 $verified = Payment::verify_signature([
                     'razorpay_order_id' => $appointment->transaction_id,
                     'razorpay_payment_id' => $request->razorpay_payment_id,
@@ -170,6 +256,7 @@ class AppointmentController extends Controller
                 ]);
                 
                 if (!$verified) {
+                    Log::error('Razorpay payment verification failed');
                     return response()->json([
                         'status' => 400,
                         'message' => 'Payment verification failed'
@@ -177,6 +264,7 @@ class AppointmentController extends Controller
                 }
                 
                 $request->payment_status = 'completed';
+                Log::info('Razorpay payment verified successfully');
             }
 
             $appointment->payment_status = $request->payment_status;
@@ -186,6 +274,12 @@ class AppointmentController extends Controller
             }
             
             $appointment->save();
+            
+            Log::info('Payment status updated successfully', [
+                'appointment_id' => $appointment->id,
+                'payment_status' => $request->payment_status,
+                'transaction_id' => $appointment->transaction_id
+            ]);
 
             return response()->json([
                 'status' => 200,
@@ -194,6 +288,12 @@ class AppointmentController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
+            Log::error('Payment Status Update Error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
             return response()->json([
                 'status' => 500,
                 'message' => 'Something went wrong!'
@@ -204,11 +304,19 @@ class AppointmentController extends Controller
     public function updateAppointmentStatus(Request $request, $id)
     {
         try {
+            Log::info('Update appointment status request received', [
+                'appointment_id' => $id,
+                'request_data' => $request->all()
+            ]);
+            
             $validator = Validator::make($request->all(), [
                 'status' => 'required|in:pending,confirmed,cancelled'
             ]);
 
             if ($validator->fails()) {
+                Log::warning('Appointment status validation failed', [
+                    'errors' => $validator->errors()
+                ]);
                 return response()->json([
                     'status' => 400,
                     'message' => $validator->errors()
@@ -218,6 +326,11 @@ class AppointmentController extends Controller
             $appointment = Appointment::findOrFail($id);
             $appointment->status = $request->status;
             $appointment->save();
+            
+            Log::info('Appointment status updated successfully', [
+                'appointment_id' => $appointment->id,
+                'status' => $request->status
+            ]);
 
             return response()->json([
                 'status' => 200,
@@ -226,6 +339,11 @@ class AppointmentController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
+            Log::error('Appointment Status Update Error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'appointment_id' => $id,
+                'request_data' => $request->all()
+            ]);
             return response()->json([
                 'status' => 500,
                 'message' => 'Something went wrong!'
@@ -236,11 +354,19 @@ class AppointmentController extends Controller
     public function updatePaymentStatusById(Request $request, $id)
     {
         try {
+            Log::info('Update payment status by ID request received', [
+                'appointment_id' => $id,
+                'request_data' => $request->all()
+            ]);
+            
             $validator = Validator::make($request->all(), [
                 'payment_status' => 'required|in:pending,completed,failed,unpaid'
             ]);
 
             if ($validator->fails()) {
+                Log::warning('Payment status validation failed', [
+                    'errors' => $validator->errors()
+                ]);
                 return response()->json([
                     'status' => 400,
                     'message' => $validator->errors()
@@ -250,6 +376,11 @@ class AppointmentController extends Controller
             $appointment = Appointment::findOrFail($id);
             $appointment->payment_status = $request->payment_status;
             $appointment->save();
+            
+            Log::info('Payment status updated successfully', [
+                'appointment_id' => $appointment->id,
+                'payment_status' => $request->payment_status
+            ]);
 
             return response()->json([
                 'status' => 200,
@@ -258,6 +389,11 @@ class AppointmentController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
+            Log::error('Payment Status Update Error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'appointment_id' => $id,
+                'request_data' => $request->all()
+            ]);
             return response()->json([
                 'status' => 500,
                 'message' => 'Something went wrong!'
@@ -268,6 +404,10 @@ class AppointmentController extends Controller
     public function storeContact(Request $request)
     {
         try {
+            Log::info('Contact form submission received', [
+                'request_data' => $request->all()
+            ]);
+            
             $validator = Validator::make($request->all(), [
                 'fullname' => 'required|string|max:255',
                 'mobile' => 'required|string|max:15',
@@ -277,6 +417,9 @@ class AppointmentController extends Controller
             ]);
 
             if ($validator->fails()) {
+                Log::warning('Contact form validation failed', [
+                    'errors' => $validator->errors()
+                ]);
                 return response()->json([
                     'status' => 400,
                     'message' => $validator->errors()
@@ -291,6 +434,10 @@ class AppointmentController extends Controller
                 'message' => $request->message,
                 'status' => 'unread'
             ]);
+            
+            Log::info('Contact form submitted successfully', [
+                'contact_id' => $contact->id
+            ]);
 
             return response()->json([
                 'status' => 200,
@@ -298,6 +445,10 @@ class AppointmentController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
+            Log::error('Contact Form Error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all()
+            ]);
             return response()->json([
                 'status' => 500,
                 'message' => 'Something went wrong!'
