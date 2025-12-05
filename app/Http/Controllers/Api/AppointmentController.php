@@ -107,27 +107,49 @@ class AppointmentController extends Controller
                 ], 400);
             }
 
-            $appointmentData = [
-                'fullname' => $request->fullname,
-                'mobile' => $request->mobile,
-                'email' => $request->email ?? 'usernotselected@gmail.com',
-                'selected_date' => $request->selected_date,
-                'selected_time' => $request->selected_time,
-                'reason' => $request->reason,
-                'message' => $request->message,
-                'status' => 'pending',
-                'payment_method' => $request->payment_method,
-                'amount' => $request->amount,
-                'payment_status' => $request->payment_method === 'offline' ? 'pending' : 'unpaid'
-            ];
+            // For offline payments, create appointment immediately
+            if ($request->payment_method === 'offline') {
+                $appointmentData = [
+                    'fullname' => $request->fullname,
+                    'mobile' => $request->mobile,
+                    'email' => $request->email ?? 'usernotselected@gmail.com',
+                    'selected_date' => $request->selected_date,
+                    'selected_time' => $request->selected_time,
+                    'reason' => $request->reason,
+                    'message' => $request->message,
+                    'status' => 'pending',
+                    'payment_method' => $request->payment_method,
+                    'amount' => $request->amount,
+                    'payment_status' => 'pending'
+                ];
 
-            Log::info('Processing appointment with payment method: ' . $request->payment_method);
-            
-            // If online payment, we'll create a transaction ID
-            if ($request->payment_method === 'online') {
-                $appointmentData['transaction_id'] = uniqid('txn_');
+                Log::info('Creating offline appointment record', [
+                    'appointment_data' => $appointmentData
+                ]);
                 
-                Log::info('Creating Razorpay order', [
+                $appointment = Appointment::create($appointmentData);
+                
+                Log::info('Offline appointment created successfully', [
+                    'appointment_id' => $appointment->id
+                ]);
+
+                $responseData = [
+                    'status' => 200,
+                    'message' => 'Appointment booked successfully!',
+                    'appointment_id' => $appointment->id,
+                    'payment_method' => $request->payment_method
+                ];
+
+                Log::info('Offline appointment booking completed successfully', [
+                    'response_data' => $responseData
+                ]);
+
+                return response()->json($responseData, 200);
+            }
+            
+            // For online payments, create Razorpay order first
+            else if ($request->payment_method === 'online') {
+                Log::info('Processing online payment - creating Razorpay order', [
                     'amount' => $request->amount
                 ]);
                 
@@ -146,39 +168,49 @@ class AppointmentController extends Controller
                     'order_id' => $razorpayOrder['id']
                 ]);
                 
-                $appointmentData['transaction_id'] = $razorpayOrder['id'];
+                // Create appointment with unpaid status
+                $appointmentData = [
+                    'fullname' => $request->fullname,
+                    'mobile' => $request->mobile,
+                    'email' => $request->email ?? 'usernotselected@gmail.com',
+                    'selected_date' => $request->selected_date,
+                    'selected_time' => $request->selected_time,
+                    'reason' => $request->reason,
+                    'message' => $request->message,
+                    'status' => 'pending',
+                    'payment_method' => $request->payment_method,
+                    'amount' => $request->amount,
+                    'payment_status' => 'unpaid',
+                    'transaction_id' => $razorpayOrder['id']
+                ];
+
+                Log::info('Creating online appointment record (unpaid)', [
+                    'appointment_data' => $appointmentData
+                ]);
+                
+                $appointment = Appointment::create($appointmentData);
+                
+                Log::info('Online appointment created successfully (awaiting payment)', [
+                    'appointment_id' => $appointment->id
+                ]);
+
+                $responseData = [
+                    'status' => 200,
+                    'message' => 'Please complete the payment to confirm your appointment!',
+                    'appointment_id' => $appointment->id,
+                    'payment_method' => $request->payment_method,
+                    'transaction_id' => $appointment->transaction_id,
+                    'razorpay_order_id' => $razorpayOrder['id'],
+                    'razorpay_key_id' => env('RAZORPAY_KEY_ID', 'rzp_test_T4AraVExlu3Idf'),
+                    'amount' => $razorpayOrder['amount']
+                ];
+
+                Log::info('Online appointment creation completed - awaiting payment', [
+                    'response_data' => $responseData
+                ]);
+
+                return response()->json($responseData, 200);
             }
-
-            Log::info('Creating appointment record', [
-                'appointment_data' => $appointmentData
-            ]);
-            
-            $appointment = Appointment::create($appointmentData);
-            
-            Log::info('Appointment created successfully', [
-                'appointment_id' => $appointment->id
-            ]);
-
-            $responseData = [
-                'status' => 200,
-                'message' => 'Appointment booked successfully!',
-                'appointment_id' => $appointment->id,
-                'payment_method' => $request->payment_method,
-                'transaction_id' => $appointment->transaction_id ?? null
-            ];
-
-            // If online payment, include Razorpay order details
-            if ($request->payment_method === 'online' && isset($razorpayOrder)) {
-                $responseData['razorpay_order_id'] = $razorpayOrder['id'];
-                $responseData['razorpay_key_id'] = env('RAZORPAY_KEY_ID', 'rzp_test_T4AraVExlu3Idf');
-                $responseData['amount'] = $razorpayOrder['amount'];
-            }
-
-            Log::info('Appointment booking completed successfully', [
-                'response_data' => $responseData
-            ]);
-
-            return response()->json($responseData, 200);
 
         } catch (\Exception $e) {
             Log::error('Appointment Booking Error: ' . $e->getMessage(), [
@@ -237,6 +269,7 @@ class AppointmentController extends Controller
             Log::info('Processing payment for appointment', [
                 'appointment_id' => $appointment->id,
                 'current_payment_status' => $appointment->payment_status,
+                'current_appointment_status' => $appointment->status,
                 'new_payment_status' => $request->payment_status,
                 'has_razorpay_payment_id' => !empty($request->razorpay_payment_id),
                 'has_razorpay_signature' => !empty($request->razorpay_signature)
@@ -257,6 +290,10 @@ class AppointmentController extends Controller
                 
                 if (!$verified) {
                     Log::error('Razorpay payment verification failed');
+                    // Update payment status to failed
+                    $appointment->payment_status = 'failed';
+                    $appointment->save();
+                    
                     return response()->json([
                         'status' => 400,
                         'message' => 'Payment verification failed'
@@ -267,7 +304,16 @@ class AppointmentController extends Controller
                 Log::info('Razorpay payment verified successfully');
             }
 
+            // Update payment status
             $appointment->payment_status = $request->payment_status;
+            
+            // If payment is completed, confirm the appointment
+            if ($request->payment_status === 'completed') {
+                $appointment->status = 'confirmed';
+                Log::info('Appointment confirmed due to successful payment', [
+                    'appointment_id' => $appointment->id
+                ]);
+            }
             
             if ($request->transaction_id) {
                 $appointment->transaction_id = $request->transaction_id;
@@ -278,12 +324,20 @@ class AppointmentController extends Controller
             Log::info('Payment status updated successfully', [
                 'appointment_id' => $appointment->id,
                 'payment_status' => $request->payment_status,
+                'appointment_status' => $appointment->status,
                 'transaction_id' => $appointment->transaction_id
             ]);
 
+            $message = 'Payment status updated successfully!';
+            if ($request->payment_status === 'completed') {
+                $message = 'Payment completed successfully! Your appointment is now confirmed.';
+            } else if ($request->payment_status === 'failed') {
+                $message = 'Payment failed. Please try again or contact support.';
+            }
+
             return response()->json([
                 'status' => 200,
-                'message' => 'Payment status updated successfully!',
+                'message' => $message,
                 'appointment' => $appointment
             ], 200);
 

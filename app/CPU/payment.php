@@ -62,11 +62,29 @@ class Payment
     {
         try {
             Log::info('Verifying Razorpay signature', [
-                'attributes' => $attributes
+                'attributes' => [
+                    'razorpay_order_id' => $attributes['razorpay_order_id'] ?? null,
+                    'razorpay_payment_id' => $attributes['razorpay_payment_id'] ?? null,
+                    'signature_provided' => !empty($attributes['razorpay_signature'])
+                ]
             ]);
+            
+            // Validate required attributes
+            if (empty($attributes['razorpay_order_id']) || 
+                empty($attributes['razorpay_payment_id']) || 
+                empty($attributes['razorpay_signature'])) {
+                Log::warning('Missing required attributes for signature verification', [
+                    'provided_attributes' => array_keys($attributes)
+                ]);
+                return false;
+            }
             
             $razorpay_key_id = env('RAZORPAY_KEY_ID', 'rzp_test_T4AraVExlu3Idf');
             $razorpay_key_secret = env('RAZORPAY_KEY_SECRET', 'IbL6yVAfWAx4F1l7S1gZCVuT');
+            
+            Log::info('Using Razorpay credentials for verification', [
+                'key_id' => $razorpay_key_id
+            ]);
             
             $api = new Api($razorpay_key_id, $razorpay_key_secret);
             
@@ -80,16 +98,15 @@ class Payment
             
             Log::info('Razorpay signature verification result', [
                 'is_valid' => $is_valid,
-                'generated_signature' => $generated_signature,
-                'received_signature' => $attributes['razorpay_signature']
+                'generated_signature_sample' => substr($generated_signature, 0, 10) . '...',
+                'received_signature_sample' => substr($attributes['razorpay_signature'], 0, 10) . '...'
             ]);
             
             if ($is_valid) {
+                Log::info('Razorpay signature verified successfully');
                 return true;
             } else {
                 Log::warning('Razorpay signature verification failed', [
-                    'expected_signature' => $generated_signature,
-                    'received_signature' => $attributes['razorpay_signature'],
                     'order_id' => $attributes['razorpay_order_id'],
                     'payment_id' => $attributes['razorpay_payment_id']
                 ]);
@@ -98,7 +115,7 @@ class Payment
         } catch (\Exception $e) {
             Log::error('Razorpay Signature Verification Error: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString(),
-                'attributes' => $attributes,
+                'attributes' => array_keys($attributes),
                 'file' => $e->getFile(),
                 'line' => $e->getLine()
             ]);
